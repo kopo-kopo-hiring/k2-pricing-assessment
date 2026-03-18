@@ -1,1 +1,509 @@
+name: Pricing API Autograder
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+jobs:
+  detect-and-grade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      # ── 1. Checkout candidate code ────────────────────────────────────────
+      - name: Checkout submission
+        uses: actions/checkout@v4
+
+      # ── 2. Detect language from repo contents ────────────────────────────
+      - name: Detect language
+        id: detect
+        run: |
+          if [ -f "package.json" ]; then
+            echo "lang=node" >> $GITHUB_OUTPUT
+          elif [ -f "requirements.txt" ] || [ -f "pyproject.toml" ] || ls *.py 2>/dev/null; then
+            echo "lang=python" >> $GITHUB_OUTPUT
+          elif [ -f "pom.xml" ] || [ -f "build.gradle" ]; then
+            echo "lang=java" >> $GITHUB_OUTPUT
+          elif [ -f "go.mod" ]; then
+            echo "lang=go" >> $GITHUB_OUTPUT
+          elif [ -f "Gemfile" ] || ls *.rb 2>/dev/null; then
+            echo "lang=ruby" >> $GITHUB_OUTPUT
+          elif [ -f "composer.json" ] || ls *.php 2>/dev/null; then
+            echo "lang=php" >> $GITHUB_OUTPUT
+          else
+            echo "lang=unknown" >> $GITHUB_OUTPUT
+          fi
+
+      # ── 3a. Node.js setup ─────────────────────────────────────────────────
+      - name: Set up Node.js
+        if: steps.detect.outputs.lang == 'node'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install Node dependencies
+        if: steps.detect.outputs.lang == 'node'
+        run: npm ci
+
+      # ── 3b. Python setup ──────────────────────────────────────────────────
+      - name: Set up Python
+        if: steps.detect.outputs.lang == 'python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        if: steps.detect.outputs.lang == 'python'
+        run: |
+          pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f pyproject.toml ]; then pip install .; fi
+
+      # ── 3c. Java setup ────────────────────────────────────────────────────
+      - name: Set up Java
+        if: steps.detect.outputs.lang == 'java'
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: "temurin"
+          cache: "maven"
+
+      - name: Build Java project (Maven)
+        if: steps.detect.outputs.lang == 'java' && hashFiles('pom.xml') != ''
+        run: mvn package -DskipTests -q
+
+      - name: Build Java project (Gradle)
+        if: steps.detect.outputs.lang == 'java' && hashFiles('build.gradle') != ''
+        run: ./gradlew build -x test -q
+
+      # ── 3d. Go setup ──────────────────────────────────────────────────────
+      - name: Set up Go
+        if: steps.detect.outputs.lang == 'go'
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+
+      - name: Build Go binary
+        if: steps.detect.outputs.lang == 'go'
+        run: go build -o server ./...
+
+      # ── 3e. Ruby setup ────────────────────────────────────────────────────
+      - name: Set up Ruby
+        if: steps.detect.outputs.lang == 'ruby'
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true   # runs `bundle install` and caches gems automatically
+
+      # ── 3f. PHP setup ─────────────────────────────────────────────────────
+      - name: Set up PHP
+        if: steps.detect.outputs.lang == 'php'
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: mbstring, xml, curl, pdo, pdo_sqlite
+          tools: composer:v2
+
+      - name: Install PHP dependencies
+        if: steps.detect.outputs.lang == 'php'
+        run: |
+          if [ -f composer.json ]; then
+            composer install --no-interaction --prefer-dist --optimize-autoloader
+          fi
+
+      # ── 4. Install test runner (always needed) ────────────────────────────
+      - name: Install grader dependencies
+        run: |
+          pip install requests pytest --quiet
+
+      # ── 5. Start the candidate's server ──────────────────────────────────
+      - name: Start server (Node)
+        if: steps.detect.outputs.lang == 'node'
+        run: |
+          # Prefer a "start" script, fall back to common entry points
+          if jq -e '.scripts.start' package.json > /dev/null 2>&1; then
+            npm start &
+          elif [ -f index.js ]; then
+            node index.js &
+          elif [ -f src/index.js ]; then
+            node src/index.js &
+          elif [ -f app.js ]; then
+            node app.js &
+          fi
+          echo "SERVER_PID=$!" >> $GITHUB_ENV
+        env:
+          PORT: 3000
+
+      - name: Start server (Python)
+        if: steps.detect.outputs.lang == 'python'
+        run: |
+          if [ -f app.py ]; then
+            python app.py &
+          elif [ -f main.py ]; then
+            python main.py &
+          elif [ -f src/app.py ]; then
+            python src/app.py &
+          fi
+          echo "SERVER_PID=$!" >> $GITHUB_ENV
+        env:
+          PORT: 3000
+
+      - name: Start server (Java Maven)
+        if: steps.detect.outputs.lang == 'java' && hashFiles('pom.xml') != ''
+        run: |
+          JAR=$(find target -name "*.jar" ! -name "*sources*" | head -1)
+          java -jar "$JAR" &
+          echo "SERVER_PID=$!" >> $GITHUB_ENV
+        env:
+          PORT: 3000
+
+      - name: Start server (Go)
+        if: steps.detect.outputs.lang == 'go'
+        run: |
+          ./server &
+          echo "SERVER_PID=$!" >> $GITHUB_ENV
+        env:
+          PORT: 3000
+
+      - name: Start server (Ruby)
+        if: steps.detect.outputs.lang == 'ruby'
+        run: |
+          # Support Rails, Sinatra, and plain Ruby servers
+          if [ -f "config/environment.rb" ]; then
+            # Rails app
+            bundle exec rails server -p 3000 -e production &
+          elif [ -f "Gemfile" ] && grep -q "sinatra" Gemfile; then
+            # Sinatra app — try common entry points
+            if [ -f app.rb ]; then
+              bundle exec ruby app.rb -p 3000 &
+            elif [ -f main.rb ]; then
+              bundle exec ruby main.rb -p 3000 &
+            elif [ -f server.rb ]; then
+              bundle exec ruby server.rb -p 3000 &
+            fi
+          else
+            # Generic Ruby — try common entry points
+            for f in app.rb main.rb server.rb; do
+              [ -f "$f" ] && bundle exec ruby "$f" -p 3000 & break
+            done
+          fi
+          echo "SERVER_PID=$!" >> $GITHUB_ENV
+        env:
+          PORT: 3000
+          RACK_ENV: production
+
+      - name: Start server (PHP)
+        if: steps.detect.outputs.lang == 'php'
+        run: |
+          # Support Laravel, Symfony, and plain PHP
+          if [ -f "artisan" ]; then
+            # Laravel — use built-in server pointed at public/
+            php artisan serve --port=3000 --no-interaction &
+          elif [ -f "bin/console" ] && grep -q "symfony" composer.json; then
+            # Symfony — use built-in PHP server
+            php -S 0.0.0.0:3000 -t public/ &
+          elif [ -d "public" ]; then
+            # Generic framework with a public/ docroot
+            php -S 0.0.0.0:3000 -t public/ &
+          else
+            # Plain PHP — serve from root, prefer index.php
+            php -S 0.0.0.0:3000 &
+          fi
+          echo "SERVER_PID=$!" >> $GITHUB_ENV
+        env:
+          PORT: 3000
+          APP_ENV: production
+
+      # ── 6. Wait for server to be ready ───────────────────────────────────
+      - name: Wait for server to be ready
+        run: |
+          echo "Waiting for server on port 3000..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000/health > /dev/null 2>&1; then
+              echo "Server is up!"
+              break
+            fi
+            echo "  attempt $i/30..."
+            sleep 2
+          done
+          # Final check — fail fast if server never came up
+          curl -sf http://localhost:3000/health || \
+            { echo "::error::Server did not start within 60 seconds"; exit 1; }
+
+      # ════════════════════════════════════════════════════════════════════
+      # SUITE A — Candidate's own tests (quality signal)
+      #
+      #  These are the tests the candidate wrote themselves.
+      #  We run them and report pass/fail but do NOT use them for scoring.
+      #  They tell you: does this person write tests? Are they meaningful?
+      # ════════════════════════════════════════════════════════════════════
+
+      # ── 7. Run candidate's own tests ─────────────────────────────────────
+      - name: Run candidate tests (Node)
+        if: steps.detect.outputs.lang == 'node'
+        id: candidate_node
+        run: |
+          if jq -e '.scripts.test' package.json > /dev/null 2>&1; then
+            npm test 2>&1 | tee candidate_test_output.txt
+            echo "found=true" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️  No test script found in package.json" | tee candidate_test_output.txt
+            echo "found=false" >> $GITHUB_OUTPUT
+          fi
+        continue-on-error: true
+
+      - name: Run candidate tests (Python)
+        if: steps.detect.outputs.lang == 'python'
+        id: candidate_python
+        run: |
+          # Look for pytest-compatible test files
+          if find . -name "test_*.py" -o -name "*_test.py" | grep -q .; then
+            pytest --tb=short --no-header -v 2>&1 | tee candidate_test_output.txt
+            echo "found=true" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️  No test files found (expected test_*.py or *_test.py)" \
+              | tee candidate_test_output.txt
+            echo "found=false" >> $GITHUB_OUTPUT
+          fi
+        continue-on-error: true
+
+      - name: Run candidate tests (Ruby)
+        if: steps.detect.outputs.lang == 'ruby'
+        id: candidate_ruby
+        run: |
+          if [ -d "spec" ]; then
+            bundle exec rspec --format documentation 2>&1 | tee candidate_test_output.txt
+            echo "found=true" >> $GITHUB_OUTPUT
+          elif [ -d "test" ]; then
+            bundle exec ruby -Itest test/**/*_test.rb 2>&1 | tee candidate_test_output.txt
+            echo "found=true" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️  No spec/ or test/ directory found" | tee candidate_test_output.txt
+            echo "found=false" >> $GITHUB_OUTPUT
+          fi
+        continue-on-error: true
+
+      - name: Run candidate tests (PHP)
+        if: steps.detect.outputs.lang == 'php'
+        id: candidate_php
+        run: |
+          if [ -f "vendor/bin/phpunit" ]; then
+            ./vendor/bin/phpunit --testdox 2>&1 | tee candidate_test_output.txt
+            echo "found=true" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️  PHPUnit not found — no tests run" | tee candidate_test_output.txt
+            echo "found=false" >> $GITHUB_OUTPUT
+          fi
+        continue-on-error: true
+
+      - name: Run candidate tests (Java)
+        if: steps.detect.outputs.lang == 'java'
+        id: candidate_java
+        run: |
+          if [ -f pom.xml ]; then
+            mvn test 2>&1 | tee candidate_test_output.txt
+          else
+            ./gradlew test 2>&1 | tee candidate_test_output.txt
+          fi
+          echo "found=true" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      - name: Run candidate tests (Go)
+        if: steps.detect.outputs.lang == 'go'
+        id: candidate_go
+        run: |
+          if find . -name "*_test.go" | grep -q .; then
+            go test ./... -v 2>&1 | tee candidate_test_output.txt
+            echo "found=true" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️  No *_test.go files found" | tee candidate_test_output.txt
+            echo "found=false" >> $GITHUB_OUTPUT
+          fi
+        continue-on-error: true
+
+      # ── 7b. Summarise candidate test signal ──────────────────────────────
+      - name: Summarise candidate tests
+        run: |
+          python3 - <<'EOF'
+          import os, re
+
+          output_file = "candidate_test_output.txt"
+          summary_file = os.environ["GITHUB_STEP_SUMMARY"]
+
+          with open(summary_file, "a") as s:
+              s.write("## Suite A — Candidate's Own Tests\n\n")
+              s.write("> These tests were written by the candidate. ")
+              s.write("They are a **code quality signal**, not a correctness score.\n\n")
+
+              if not os.path.exists(output_file):
+                  s.write("⚠️ No test output captured.\n\n")
+              else:
+                  with open(output_file) as f:
+                      content = f.read().strip()
+
+                  if "⚠️" in content:
+                      s.write("| Status | Detail |\n")
+                      s.write("|--------|--------|\n")
+                      s.write(f"| ⚠️ No tests found | Candidate did not include a test suite |\n\n")
+                  else:
+                      # Try to extract a pass/fail line from common test runner outputs
+                      passed_match = re.search(
+                          r'(\d+)\s+(?:passed|tests? passed|examples?,\s*0 failures)',
+                          content, re.IGNORECASE
+                      )
+                      failed_match = re.search(
+                          r'(\d+)\s+(?:failed|failures?|errors?)',
+                          content, re.IGNORECASE
+                      )
+                      passed = passed_match.group(1) if passed_match else "?"
+                      failed = failed_match.group(1) if failed_match else "0"
+
+                      s.write(f"| Metric | Value |\n")
+                      s.write(f"|--------|-------|\n")
+                      s.write(f"| Tests Passed | `{passed}` |\n")
+                      s.write(f"| Tests Failed | `{failed}` |\n\n")
+                      s.write("_See uploaded artifact `candidate-test-output` for full details._\n\n")
+          EOF
+
+      # ════════════════════════════════════════════════════════════════════
+      # SUITE B — Hidden grader tests (correctness score)
+      #
+      #  Your private test suite fires known HTTP requests at the running
+      #  API and checks the responses against expected values.
+      #  Candidates never see these tests — they live in a separate private
+      #  repo and are pulled at runtime via a GRADER_TOKEN secret.
+      #
+      #  Setup:
+      #    1. Create a private repo: YOUR_ORG/pricing-grader
+      #    2. Add tests/test_pricing_api.py to it
+      #    3. Create a fine-grained PAT with read access to that repo
+      #    4. Add it as a secret named GRADER_TOKEN on the template repo
+      # ════════════════════════════════════════════════════════════════════
+
+      # ── 8. Download hidden grader suite ──────────────────────────────────
+      - name: Download grader test suite
+        run: |
+          curl -sf \
+            -H "Authorization: token ${{ secrets.GRADER_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3.raw" \
+            "https://api.github.com/repos/YOUR_ORG/pricing-grader/contents/tests/test_pricing_api.py" \
+            -o test_pricing_api.py
+
+      # ── 9. Run grader tests ───────────────────────────────────────────────
+      - name: Run grader tests
+        id: grader
+        run: |
+          pip install pytest-json-report --quiet
+          pytest test_pricing_api.py \
+            --tb=short \
+            --no-header \
+            -v \
+            --json-report \
+            --json-report-file=grader_results.json \
+            2>&1 | tee grader_output.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
+        env:
+          API_BASE_URL: http://localhost:3000
+        continue-on-error: true
+
+      # ── 10. Parse grader results and write combined summary ───────────────
+      - name: Parse and report grader score
+        run: |
+          python3 - <<'EOF'
+          import json, os
+
+          summary_file = os.environ["GITHUB_STEP_SUMMARY"]
+
+          # ── Grader results ──────────────────────────────────────────────
+          with open("grader_results.json") as f:
+              data = json.load(f)
+
+          summary = data.get("summary", {})
+          passed  = summary.get("passed", 0)
+          failed  = summary.get("failed", 0)
+          total   = summary.get("total", 0)
+          score   = round((passed / total) * 100) if total > 0 else 0
+
+          # Print to Actions log
+          print(f"\n{'='*50}")
+          print(f"  AUTOGRADER RESULTS — SUITE B")
+          print(f"{'='*50}")
+          print(f"  Passed : {passed}/{total}")
+          print(f"  Failed : {failed}/{total}")
+          print(f"  Score  : {score}%")
+          print(f"{'='*50}\n")
+
+          # Determine score band
+          if score >= 90:
+              band = "🟢 Excellent"
+          elif score >= 70:
+              band = "🟡 Good"
+          elif score >= 50:
+              band = "🟠 Partial"
+          else:
+              band = "🔴 Needs Work"
+
+          with open(summary_file, "a") as s:
+              s.write("---\n\n")
+              s.write("## Suite B — Grader Correctness Tests\n\n")
+              s.write("> Hidden tests verifying the API returns correct values.\n\n")
+              s.write(f"| Metric | Value |\n")
+              s.write(f"|--------|-------|\n")
+              s.write(f"| Tests Passed | `{passed}/{total}` |\n")
+              s.write(f"| Tests Failed | `{failed}/{total}` |\n")
+              s.write(f"| Score | `{score}%` |\n")
+              s.write(f"| Band | {band} |\n\n")
+
+              if data.get("tests"):
+                  s.write("### Test Breakdown\n\n")
+                  s.write("| Test Case | Result |\n")
+                  s.write("|-----------|--------|\n")
+                  for t in data["tests"]:
+                      icon = "✅" if t["outcome"] == "passed" else "❌"
+                      name = t["nodeid"].split("::")[-1].replace("_", " ").title()
+                      s.write(f"| {name} | {icon} |\n")
+
+              s.write("\n---\n\n")
+              s.write("## Overall Summary\n\n")
+              s.write(f"| | |\n")
+              s.write(f"|---|---|\n")
+              s.write(f"| Language detected | `{os.environ.get('LANG_DETECTED', 'unknown')}` |\n")
+              s.write(f"| Correctness score | **{score}% ({passed}/{total})** |\n")
+              s.write(f"| Band | {band} |\n")
+              s.write(f"| Candidate wrote tests | See Suite A above |\n")
+          EOF
+        env:
+          LANG_DETECTED: ${{ steps.detect.outputs.lang }}
+
+      # ── 11. Cleanup: stop the server ──────────────────────────────────────
+      - name: Stop server
+        if: always()
+        run: |
+          if [ -n "$SERVER_PID" ]; then
+            kill "$SERVER_PID" 2>/dev/null || true
+          fi
+          fuser -k 3000/tcp 2>/dev/null || true
+
+      # ── 12. Upload all artifacts for recruiter review ─────────────────────
+      - name: Upload grader results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: grader-results-${{ github.sha }}
+          path: |
+            grader_results.json
+            grader_output.txt
+          retention-days: 90
+
+      - name: Upload candidate test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-test-output-${{ github.sha }}
+          path: candidate_test_output.txt
+          retention-days: 90
 
