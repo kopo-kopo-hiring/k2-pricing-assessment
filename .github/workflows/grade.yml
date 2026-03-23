@@ -390,7 +390,7 @@ jobs:
           curl -sf \
             -H "Authorization: token ${{ secrets.GRADER_TOKEN }}" \
             -H "Accept: application/vnd.github.v3.raw" \
-            "https://api.github.com/repos/YOUR_ORG/pricing-grader/contents/tests/test_pricing_api.py" \
+            "https://api.github.com/repos/kopo-kopo-hiring/pricing-grader/contents/tests/test_pricing_api.py" \
             -o test_pricing_api.py
 
       # ── 9. Run grader tests ───────────────────────────────────────────────
