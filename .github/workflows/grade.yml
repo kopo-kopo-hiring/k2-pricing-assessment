@@ -393,14 +393,14 @@ jobs:
           curl -sf \
             -H "Authorization: token ${{ secrets.GRADER_TOKEN }}" \
             -H "Accept: application/vnd.github.v3.raw" \
-            "https://api.github.com/repos/kopo-kopo-hiring/pricing-grader/contents/spec/pricing_api_spec.rb" \
+            "https://api.github.com/repos/kopo-kopo-hiring/k2-pricing-grader/contents/spec/pricing_api_spec.rb" \
             -o grader/spec/pricing_api_spec.rb
 
           # Download the grader Gemfile
           curl -sf \
             -H "Authorization: token ${{ secrets.GRADER_TOKEN }}" \
             -H "Accept: application/vnd.github.v3.raw" \
-            "https://api.github.com/repos/YOUR_ORG/pricing-grader/contents/Gemfile" \
+            "https://api.github.com/repos/kopo-kopo-hiring/k2-pricing-grader/contents/Gemfile" \
             -o grader/Gemfile
 
       # ── 9. Install grader gems and run grader tests ───────────────────────
