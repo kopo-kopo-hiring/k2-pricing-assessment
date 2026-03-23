@@ -379,7 +379,7 @@ jobs:
       #
       #  Setup:
       #    1. Create a private repo: YOUR_ORG/pricing-grader
-      #    2. Add tests/test_pricing_api.py to it
+      #    2. Add spec/pricing_api_spec.rb and Gemfile to it
       #    3. Create a fine-grained PAT with read access to that repo
       #    4. Add it as a secret named GRADER_TOKEN on the template repo
       # ════════════════════════════════════════════════════════════════════
@@ -387,23 +387,38 @@ jobs:
       # ── 8. Download hidden grader suite ──────────────────────────────────
       - name: Download grader test suite
         run: |
+          mkdir -p grader/spec
+
+          # Download the RSpec test file
           curl -sf \
             -H "Authorization: token ${{ secrets.GRADER_TOKEN }}" \
             -H "Accept: application/vnd.github.v3.raw" \
-            "https://api.github.com/repos/kopo-kopo-hiring/pricing-grader/contents/tests/test_pricing_api.py" \
-            -o test_pricing_api.py
+            "https://api.github.com/repos/YOUR_ORG/pricing-grader/contents/spec/pricing_api_spec.rb" \
+            -o grader/spec/pricing_api_spec.rb
 
-      # ── 9. Run grader tests ───────────────────────────────────────────────
+          # Download the grader Gemfile
+          curl -sf \
+            -H "Authorization: token ${{ secrets.GRADER_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3.raw" \
+            "https://api.github.com/repos/YOUR_ORG/pricing-grader/contents/Gemfile" \
+            -o grader/Gemfile
+
+      # ── 9. Install grader gems and run grader tests ───────────────────────
+      - name: Set up Ruby for grader
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          working-directory: grader
+          bundler-cache: true
+
       - name: Run grader tests
         id: grader
+        working-directory: grader
         run: |
-          pip install pytest-json-report --quiet
-          pytest test_pricing_api.py \
-            --tb=short \
-            --no-header \
-            -v \
-            --json-report \
-            --json-report-file=grader_results.json \
+          bundle exec rspec spec/pricing_api_spec.rb \
+            --format json \
+            --out grader_results.json \
+            --format documentation \
             2>&1 | tee grader_output.txt
           echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
         env:
@@ -418,14 +433,14 @@ jobs:
 
           summary_file = os.environ["GITHUB_STEP_SUMMARY"]
 
-          # ── Grader results ──────────────────────────────────────────────
-          with open("grader_results.json") as f:
+          # RSpec JSON format: { "summary": { "example_count": N, "failure_count": N, ... } }
+          with open("grader/grader_results.json") as f:
               data = json.load(f)
 
           summary = data.get("summary", {})
-          passed  = summary.get("passed", 0)
-          failed  = summary.get("failed", 0)
-          total   = summary.get("total", 0)
+          total   = summary.get("example_count", 0)
+          failed  = summary.get("failure_count", 0)
+          passed  = total - failed
           score   = round((passed / total) * 100) if total > 0 else 0
 
           # Print to Actions log
@@ -495,8 +510,8 @@ jobs:
         with:
           name: grader-results-${{ github.sha }}
           path: |
-            grader_results.json
-            grader_output.txt
+            grader/grader_results.json
+            grader/grader_output.txt
           retention-days: 90
 
       - name: Upload candidate test output
@@ -506,4 +521,3 @@ jobs:
           name: candidate-test-output-${{ github.sha }}
           path: candidate_test_output.txt
           retention-days: 90
-
