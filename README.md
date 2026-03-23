@@ -112,7 +112,7 @@ Feel free to push as many times as you like — only your final push before the 
 
 Click **"Use this template"** → **"Create a new repository"** on this page.
 
-- Set the owner to **`acme-hiring`** *(your hiring org — the grader only runs inside this org)*
+- Set the owner to **`kopo-kopo-hiring`** *(the grader only runs inside this org)*
 - Name your repo something like `pricing-assessment-yourname`
 - Set visibility to **Private**
 - Click **"Create repository"**
@@ -120,7 +120,7 @@ Click **"Use this template"** → **"Create a new repository"** on this page.
 ### Step 2 — Clone your repo
 
 ```bash
-git clone https://github.com/acme-hiring/pricing-assessment-yourname.git
+git clone https://github.com/kopo-kopo-hiring/pricing-assessment-yourname.git
 cd pricing-assessment-yourname
 ```
 
