@@ -108,35 +108,41 @@ Feel free to push as many times as you like — only your final push before the 
 
 ## Getting Started
 
-### Step 1 — Accept the assessment
+### Step 1 — Accept your repository invitation
 
-Click **"Use this template"** → **"Create a new repository"** on this page.
+You will receive an email from GitHub with the subject **"You've been invited to collaborate"**. 
 
-- Set the owner to **`kopo-kopo-hiring`** *(the grader only runs inside this org)*
-- Name your repo something like `pricing-assessment-yourname`
-- Set visibility to **Private**
-- Click **"Create repository"**
+- Open the email and click **"View invitation"**
+- Click **"Accept invitation"** on the GitHub page that opens
+- You now have access to your personal assessment repository at:
+  `https://github.com/kopo-kopo-hiring/pricing-assessment-[your-github-username]`
+
+> ⚠️ If you can't find the invitation email, check your spam folder. You can also accept it directly by visiting `https://github.com/kopo-kopo-hiring` — the invitation banner will appear at the top of the page.
 
 ### Step 2 — Clone your repo
 
+Once you have accepted the invitation, clone the repo to your local machine:
+
 ```bash
-git clone https://github.com/kopo-kopo-hiring/pricing-assessment-yourname.git
-cd pricing-assessment-yourname
+git clone https://github.com/kopo-kopo-hiring/pricing-assessment-[your-github-username].git
+cd pricing-assessment-[your-github-username]
 ```
+
+Replace `[your-github-username]` with your actual GitHub username.
 
 ### Step 3 — Build your solution
 
 Create your API in whatever language and structure you prefer. For example, a Node.js solution might look like:
 
 ```
-pricing-assessment-yourname/
+pricing-assessment-[your-github-username]/
 ├── src/
 │   └── index.js
 ├── tests/
 │   └── pricing.test.js
 ├── pricing.json
 ├── package.json
-└── README.md        ← update this with setup notes
+└── README.md        ← update this with your setup notes
 ```
 
 ### Step 4 — Update the README
@@ -154,7 +160,14 @@ git commit -m "Initial solution"
 git push
 ```
 
-Then go to the **Actions tab** in your repo and watch the grader run. If your server doesn't start, check the logs — the most common issue is a missing `GET /health` endpoint or not reading the `PORT` environment variable.
+Then go to the **Actions tab** in your repo and watch the grader run. You can get there directly at:
+
+`https://github.com/kopo-kopo-hiring/pricing-assessment-[your-github-username]/actions`
+
+If your server doesn't start, check the logs — the most common issues are:
+- Missing `GET /health` endpoint
+- Not reading the `PORT` environment variable
+- Entry point file not found (make sure your start command is in `package.json` scripts, or your main file is named `app.py`, `main.go`, etc.)
 
 ---
 
